@@ -1,6 +1,7 @@
 import { flexiFetch, FlexiQuizApi, HttpError, latestSubmitted, quizId, responseId } from "./flexiquiz";
 import { convertQuestions } from "./moodle";
 import { filterRows, normalizeResponse, questionRows, questionsCsv, ReportFilters, responsesCsv, summarize } from "./reports";
+import { buildScormPackage, ScormLaunchMode } from "./scorm";
 
 type Env = Cloudflare.Env;
 type Ctx = ExecutionContext;
@@ -108,6 +109,40 @@ async function moodleExport(request: Request, env: Env, ctx: Ctx) {
   });
 }
 
+async function scormExport(request: Request, env: Env) {
+  const body = await readJson<{ quizId?: string; quizName?: string; launchUrl?: string; launchMode?: ScormLaunchMode }>(request);
+  if (!body.quizId) throw new HttpError(400, "quizId is required.");
+  if (!body.launchUrl) throw new HttpError(400, "FlexiQuiz launch URL is required.");
+  const launchUrl = new URL(body.launchUrl);
+  if (!["https:", "http:"].includes(launchUrl.protocol)) throw new HttpError(400, "Launch URL must be an http or https URL.");
+  const quizName = body.quizName || body.quizId;
+  const launchMode = body.launchMode === "iframe" ? "iframe" : "new_window";
+  const zip = buildScormPackage({
+    quizId: body.quizId,
+    quizName,
+    launchUrl: launchUrl.toString(),
+    launchMode,
+  });
+  const filename = `${slug(quizName)}-${stamp()}.scorm.zip`;
+  const key = `scorm/${filename}`;
+  await env.EXPORTS.put(key, zip, { httpMetadata: { contentType: "application/zip" } });
+  const exportId = crypto.randomUUID();
+  const now = new Date().toISOString();
+  await env.DB.batch([
+    env.DB.prepare("INSERT INTO flexiquiz_launch_urls (quiz_id, launch_url, launch_mode, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(quiz_id) DO UPDATE SET launch_url = excluded.launch_url, launch_mode = excluded.launch_mode, updated_at = excluded.updated_at")
+      .bind(body.quizId, launchUrl.toString(), launchMode, now),
+    env.DB.prepare("INSERT INTO scorm_exports (export_id, quiz_id, quiz_name, launch_url, launch_mode, package_object_key, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+      .bind(exportId, body.quizId, quizName, launchUrl.toString(), launchMode, key, now),
+  ]);
+  return json({
+    exportId,
+    filename,
+    downloadUrl: `/downloads/${encodeURIComponent(key)}`,
+    launchUrl: launchUrl.toString(),
+    launchMode,
+  });
+}
+
 async function runReport(request: Request, env: Env, ctx: Ctx) {
   const filters = await readJson<ReportFilters>(request);
   const quizIds = Array.isArray(filters.quizIds) ? filters.quizIds.filter(Boolean) : [];
@@ -162,6 +197,7 @@ async function api(request: Request, env: Env, ctx: Ctx, url: URL): Promise<Resp
   const responsesMatch = url.pathname.match(/^\/api\/quizzes\/([^/]+)\/responses$/);
   if (request.method === "GET" && responsesMatch) return listResponses(env, ctx, decodeURIComponent(responsesMatch[1]));
   if (request.method === "POST" && url.pathname === "/api/moodle/export") return moodleExport(request, env, ctx);
+  if (request.method === "POST" && url.pathname === "/api/scorm/export") return scormExport(request, env);
   if (request.method === "POST" && url.pathname === "/api/reports/run") return runReport(request, env, ctx);
   throw new HttpError(404, "API route not found.");
 }

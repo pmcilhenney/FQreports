@@ -194,6 +194,7 @@ tr:last-child td { border-bottom: 0; }
 .status.in_design { background: #e4ecf8; color: #294f83; }
 
 .categoryInput { width: 260px; }
+.launchUrlInput { width: 360px; max-width: 42vw; }
 .actions { display: flex; align-items: center; gap: 8px; }
 
 .downloadLink {
@@ -233,5 +234,6 @@ tr:last-child td { border-bottom: 0; }
   }
 
   .toolbar input, .toolbar select { width: 100%; }
+  .launchUrlInput { width: 100%; max-width: none; }
   .summaryGrid { grid-template-columns: repeat(2, 1fr); }
 }

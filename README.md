@@ -5,6 +5,7 @@ Cloudflare Worker app for FlexiQuiz reports.
 It has two modules:
 
 - Moodle Export: converts FlexiQuiz response-question data into Moodle XML for Navigate imports.
+- SCORM Export: builds a Moodle-uploadable SCORM 1.2 launcher package that opens the live FlexiQuiz quiz.
 - Reports: runs analytics across one or more quizzes, filters by date/status/pass-fail/search, and exports CSV.
 
 The app uses the FlexiQuiz API directly. Full authored question detail for Moodle exports comes from:
@@ -74,6 +75,12 @@ http://127.0.0.1:4317
 npm run check
 python3 -m unittest
 ```
+
+## SCORM Export Notes
+
+The SCORM export intentionally does not copy questions or answers into Moodle. It packages a small SCO wrapper that launches the live FlexiQuiz URL, so FlexiQuiz remains the source of truth for scoring, responses, and review/audit history.
+
+Because the hosted FlexiQuiz page is cross-origin, the SCORM package cannot reliably read the learner's FlexiQuiz score from inside Moodle. The package records SCORM launch/completion interaction only. Use the reports module or FlexiQuiz itself for authoritative pass/fail and score reporting.
 
 ## Legacy Python CLI
 

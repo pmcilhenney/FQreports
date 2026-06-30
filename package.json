@@ -21,5 +21,8 @@
     "@types/node": "^26.0.1",
     "typescript": "^5.9.2",
     "wrangler": "^4.40.2"
+  },
+  "dependencies": {
+    "fflate": "^0.8.3"
   }
 }

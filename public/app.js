@@ -1,6 +1,7 @@
 const state = {
   quizzes: [],
   exports: new Map(),
+  scormExports: new Map(),
   selected: new Set(),
   activeTab: "moodle",
 };
@@ -11,6 +12,7 @@ const refreshBtn = $("#refreshBtn");
 const searchInput = $("#searchInput");
 const statusFilter = $("#statusFilter");
 const quizRows = $("#quizRows");
+const scormRows = $("#scormRows");
 const reportQuizRows = $("#reportQuizRows");
 const selectedCount = $("#selectedCount");
 const selectVisibleBtn = $("#selectVisibleBtn");
@@ -54,6 +56,14 @@ function statusLabel(value) {
 
 function defaultCategory(quiz) {
   return `EMS Academy/${quiz.name || "Exam"}`;
+}
+
+function storedLaunchUrl(id) {
+  return window.localStorage.getItem(`fqreports.launchUrl.${id}`) || "";
+}
+
+function storeLaunchUrl(id, value) {
+  if (value.trim()) window.localStorage.setItem(`fqreports.launchUrl.${id}`, value.trim());
 }
 
 function quizKey(quiz) {
@@ -175,8 +185,73 @@ function renderReportRows() {
   }
 }
 
+function renderScormRows() {
+  const quizzes = visibleQuizzes();
+  if (!quizzes.length) {
+    scormRows.innerHTML = '<tr><td colspan="6" class="empty">No matching exams.</td></tr>';
+    return;
+  }
+  scormRows.innerHTML = "";
+  for (const quiz of quizzes) {
+    const id = quizKey(quiz);
+    const tr = document.createElement("tr");
+
+    const name = document.createElement("td");
+    name.innerHTML = `<div class="examName"></div><div class="muted"></div>`;
+    name.querySelector(".examName").textContent = quiz.name || "(Untitled)";
+    name.querySelector(".muted").textContent = id;
+
+    const status = document.createElement("td");
+    status.innerHTML = `<span class="status ${quiz.status || ""}"></span>`;
+    status.querySelector(".status").textContent = statusLabel(quiz.status);
+
+    const created = document.createElement("td");
+    created.textContent = quiz.date_created || "";
+
+    const urlCell = document.createElement("td");
+    const urlInput = document.createElement("input");
+    urlInput.className = "launchUrlInput";
+    urlInput.type = "url";
+    urlInput.placeholder = "https://www.flexiquiz.com/SC/N/...";
+    urlInput.value = storedLaunchUrl(id);
+    urlInput.addEventListener("change", () => storeLaunchUrl(id, urlInput.value));
+    urlCell.append(urlInput);
+
+    const modeCell = document.createElement("td");
+    const modeSelect = document.createElement("select");
+    modeSelect.innerHTML = `
+      <option value="new_window">New window</option>
+      <option value="iframe">Embed iframe</option>
+    `;
+    modeCell.append(modeSelect);
+
+    const actions = document.createElement("td");
+    const wrap = document.createElement("div");
+    wrap.className = "actions";
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = "Export ZIP";
+    button.addEventListener("click", () => exportScorm(quiz, urlInput, modeSelect, button));
+    wrap.append(button);
+
+    const existing = state.scormExports.get(id);
+    if (existing) {
+      const link = document.createElement("a");
+      link.className = "downloadLink";
+      link.href = existing.downloadUrl;
+      link.textContent = "Download";
+      link.download = existing.filename;
+      wrap.append(link);
+    }
+    actions.append(wrap);
+    tr.append(name, status, created, urlCell, modeCell, actions);
+    scormRows.append(tr);
+  }
+}
+
 function renderAll() {
   renderMoodleRows();
+  renderScormRows();
   renderReportRows();
 }
 
@@ -223,6 +298,37 @@ async function exportQuiz(quiz, category, button) {
   } finally {
     button.disabled = false;
     button.textContent = "Export XML";
+  }
+}
+
+async function exportScorm(quiz, urlInput, modeSelect, button) {
+  const id = quizKey(quiz);
+  const launchUrl = urlInput.value.trim();
+  if (!launchUrl) {
+    showToast("Paste the FlexiQuiz launch URL first.", true);
+    return;
+  }
+  button.disabled = true;
+  button.textContent = "Packaging...";
+  try {
+    const payload = await api("/api/scorm/export", {
+      method: "POST",
+      body: JSON.stringify({
+        quizId: id,
+        quizName: quiz.name,
+        launchUrl,
+        launchMode: modeSelect.value,
+      }),
+    });
+    storeLaunchUrl(id, launchUrl);
+    state.scormExports.set(id, payload);
+    renderScormRows();
+    showToast("SCORM package ready for Moodle upload.");
+  } catch (error) {
+    showToast(error.message, true);
+  } finally {
+    button.disabled = false;
+    button.textContent = "Export ZIP";
   }
 }
 
@@ -305,6 +411,7 @@ for (const tab of document.querySelectorAll(".tab")) {
     state.activeTab = tab.dataset.tab;
     document.querySelectorAll(".tab").forEach((item) => item.classList.toggle("active", item === tab));
     $("#moodlePanel").classList.toggle("active", state.activeTab === "moodle");
+    $("#scormPanel").classList.toggle("active", state.activeTab === "scorm");
     $("#reportsPanel").classList.toggle("active", state.activeTab === "reports");
   });
 }

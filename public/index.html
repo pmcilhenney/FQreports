@@ -18,6 +18,7 @@
     <main>
       <nav class="tabs" aria-label="Report modules">
         <button class="tab active" data-tab="moodle" type="button">Moodle Export</button>
+        <button class="tab" data-tab="scorm" type="button">SCORM Export</button>
         <button class="tab" data-tab="reports" type="button">Reports</button>
       </nav>
 
@@ -45,6 +46,26 @@
             </thead>
             <tbody id="quizRows">
               <tr><td colspan="5" class="empty">No exams loaded yet.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="scormPanel" class="panel">
+        <div class="tableWrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Exam</th>
+                <th>Status</th>
+                <th>Created</th>
+                <th>FlexiQuiz Launch URL</th>
+                <th>Launch</th>
+                <th>Package</th>
+              </tr>
+            </thead>
+            <tbody id="scormRows">
+              <tr><td colspan="6" class="empty">No exams loaded yet.</td></tr>
             </tbody>
           </table>
         </div>
