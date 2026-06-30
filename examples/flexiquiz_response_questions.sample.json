@@ -1,0 +1,60 @@
+[
+  {
+    "question_id": "sample-radio",
+    "type": "radio_button",
+    "version": 1,
+    "text": "What is the minimum oxygen cylinder pressure before leaving for a call?",
+    "points_available": 1.0,
+    "options": [
+      {
+        "option_id": "a",
+        "text": "200 psi",
+        "correct": false,
+        "selected": false
+      },
+      {
+        "option_id": "b",
+        "text": "500 psi",
+        "correct": true,
+        "selected": true
+      },
+      {
+        "option_id": "c",
+        "text": "1000 psi",
+        "correct": false,
+        "selected": false
+      }
+    ],
+    "categories": [
+      {
+        "name": "Operations"
+      }
+    ]
+  },
+  {
+    "question_id": "sample-checkbox",
+    "type": "checkbox",
+    "version": 1,
+    "text": "Which items are appropriate body substance isolation?",
+    "points_available": 1.0,
+    "options": [
+      {
+        "text": "Gloves",
+        "correct": true
+      },
+      {
+        "text": "Eye protection",
+        "correct": true
+      },
+      {
+        "text": "Coffee",
+        "correct": false
+      }
+    ],
+    "categories": [
+      {
+        "name": "Preparatory"
+      }
+    ]
+  }
+]

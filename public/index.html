@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>FQ Reports</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <h1>FQ Reports</h1>
+        <p id="keyStatus">Checking FlexiQuiz connection...</p>
+      </div>
+      <button id="refreshBtn" type="button">Refresh</button>
+    </header>
+
+    <main>
+      <nav class="tabs" aria-label="Report modules">
+        <button class="tab active" data-tab="moodle" type="button">Moodle Export</button>
+        <button class="tab" data-tab="reports" type="button">Reports</button>
+      </nav>
+
+      <section class="toolbar" aria-label="Quiz filters">
+        <input id="searchInput" type="search" placeholder="Search quizzes">
+        <select id="statusFilter" aria-label="Quiz status filter">
+          <option value="">All statuses</option>
+          <option value="open">Open</option>
+          <option value="closed">Closed</option>
+          <option value="in_design">In design</option>
+        </select>
+      </section>
+
+      <section id="moodlePanel" class="panel active">
+        <div class="tableWrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Exam</th>
+                <th>Status</th>
+                <th>Created</th>
+                <th>Category</th>
+                <th>Export</th>
+              </tr>
+            </thead>
+            <tbody id="quizRows">
+              <tr><td colspan="5" class="empty">No exams loaded yet.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="reportsPanel" class="panel">
+        <div class="reportControls">
+          <div class="field">
+            <label for="dateFrom">From</label>
+            <input id="dateFrom" type="date">
+          </div>
+          <div class="field">
+            <label for="dateTo">To</label>
+            <input id="dateTo" type="date">
+          </div>
+          <div class="field">
+            <label for="passFilter">Pass/fail</label>
+            <select id="passFilter">
+              <option value="all">All</option>
+              <option value="pass">Pass</option>
+              <option value="fail">Fail</option>
+              <option value="unknown">Unknown</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="responseStatusFilter">Response status</label>
+            <select id="responseStatusFilter">
+              <option value="">All</option>
+              <option value="submitted">Submitted</option>
+              <option value="in_progress">In progress</option>
+            </select>
+          </div>
+          <div class="field grow">
+            <label for="responseSearch">Find</label>
+            <input id="responseSearch" type="search" placeholder="Name, email, response ID">
+          </div>
+          <label class="check">
+            <input id="includeQuestions" type="checkbox">
+            Question detail CSV
+          </label>
+          <button id="runReportBtn" type="button">Run Report</button>
+        </div>
+
+        <div class="selectedBar">
+          <strong id="selectedCount">0 selected</strong>
+          <button id="selectVisibleBtn" type="button">Select Visible</button>
+          <button id="clearSelectedBtn" type="button">Clear</button>
+        </div>
+
+        <div class="summaryGrid" id="summaryGrid" hidden></div>
+
+        <div class="tableWrap">
+          <table>
+            <thead>
+              <tr>
+                <th class="selectCol"></th>
+                <th>Exam</th>
+                <th>Status</th>
+                <th>Created</th>
+                <th>Responses</th>
+              </tr>
+            </thead>
+            <tbody id="reportQuizRows">
+              <tr><td colspan="5" class="empty">No exams loaded yet.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="tableWrap results" id="resultsWrap" hidden>
+          <table>
+            <thead>
+              <tr>
+                <th>Submitted</th>
+                <th>Exam</th>
+                <th>Learner</th>
+                <th>Email</th>
+                <th>Score</th>
+                <th>Pass</th>
+              </tr>
+            </thead>
+            <tbody id="resultRows"></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+
+    <div id="toast" role="status" aria-live="polite"></div>
+    <script src="/app.js"></script>
+  </body>
+</html>

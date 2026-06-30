@@ -1,0 +1,34 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "fqreports",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-06-30",
+  "compatibility_flags": ["nodejs_compat"],
+  "upload_source_maps": true,
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  },
+  "assets": {
+    "binding": "ASSETS",
+    "directory": "./public",
+    "not_found_handling": "single-page-application"
+  },
+  "vars": {
+    "FLEXIQUIZ_API_BASE": "https://www.flexiquiz.com/api/v1"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "fqreports",
+      "database_id": "301ea8ee-032a-46f3-b174-aafbfa11eff6",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "EXPORTS",
+      "bucket_name": "fqreports-exports"
+    }
+  ]
+}
