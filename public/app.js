@@ -58,14 +58,6 @@ function defaultCategory(quiz) {
   return `EMS Academy/${quiz.name || "Exam"}`;
 }
 
-function storedLaunchUrl(id) {
-  return window.localStorage.getItem(`fqreports.launchUrl.${id}`) || "";
-}
-
-function storeLaunchUrl(id, value) {
-  if (value.trim()) window.localStorage.setItem(`fqreports.launchUrl.${id}`, value.trim());
-}
-
 function quizKey(quiz) {
   return String(quiz.quiz_id || quiz.id || "");
 }
@@ -188,7 +180,7 @@ function renderReportRows() {
 function renderScormRows() {
   const quizzes = visibleQuizzes();
   if (!quizzes.length) {
-    scormRows.innerHTML = '<tr><td colspan="6" class="empty">No matching exams.</td></tr>';
+    scormRows.innerHTML = '<tr><td colspan="4" class="empty">No matching exams.</td></tr>';
     return;
   }
   scormRows.innerHTML = "";
@@ -208,30 +200,13 @@ function renderScormRows() {
     const created = document.createElement("td");
     created.textContent = quiz.date_created || "";
 
-    const urlCell = document.createElement("td");
-    const urlInput = document.createElement("input");
-    urlInput.className = "launchUrlInput";
-    urlInput.type = "url";
-    urlInput.placeholder = "https://www.flexiquiz.com/SC/N/...";
-    urlInput.value = storedLaunchUrl(id);
-    urlInput.addEventListener("change", () => storeLaunchUrl(id, urlInput.value));
-    urlCell.append(urlInput);
-
-    const modeCell = document.createElement("td");
-    const modeSelect = document.createElement("select");
-    modeSelect.innerHTML = `
-      <option value="new_window">New window</option>
-      <option value="iframe">Embed iframe</option>
-    `;
-    modeCell.append(modeSelect);
-
     const actions = document.createElement("td");
     const wrap = document.createElement("div");
     wrap.className = "actions";
     const button = document.createElement("button");
     button.type = "button";
     button.textContent = "Export ZIP";
-    button.addEventListener("click", () => exportScorm(quiz, urlInput, modeSelect, button));
+    button.addEventListener("click", () => exportScorm(quiz, button));
     wrap.append(button);
 
     const existing = state.scormExports.get(id);
@@ -244,7 +219,7 @@ function renderScormRows() {
       wrap.append(link);
     }
     actions.append(wrap);
-    tr.append(name, status, created, urlCell, modeCell, actions);
+    tr.append(name, status, created, actions);
     scormRows.append(tr);
   }
 }
@@ -257,9 +232,13 @@ function renderAll() {
 
 async function loadConfig() {
   const payload = await api("/api/config");
-  keyStatus.textContent = payload.flexiquizConfigured
-    ? "FlexiQuiz API key configured in Cloudflare."
-    : "FlexiQuiz API key missing. Set FLEXIQUIZ_API_KEY with Wrangler.";
+  if (!payload.flexiquizConfigured) {
+    keyStatus.textContent = "FlexiQuiz API key missing. Set FLEXIQUIZ_API_KEY with Wrangler.";
+  } else if (!payload.flexiquizSsoConfigured) {
+    keyStatus.textContent = "FlexiQuiz API key configured. SSO secret missing for SCORM bridge exports.";
+  } else {
+    keyStatus.textContent = "FlexiQuiz API key and SSO secret configured in Cloudflare.";
+  }
 }
 
 async function loadQuizzes() {
@@ -301,13 +280,8 @@ async function exportQuiz(quiz, category, button) {
   }
 }
 
-async function exportScorm(quiz, urlInput, modeSelect, button) {
+async function exportScorm(quiz, button) {
   const id = quizKey(quiz);
-  const launchUrl = urlInput.value.trim();
-  if (!launchUrl) {
-    showToast("Paste the FlexiQuiz launch URL first.", true);
-    return;
-  }
   button.disabled = true;
   button.textContent = "Packaging...";
   try {
@@ -316,14 +290,11 @@ async function exportScorm(quiz, urlInput, modeSelect, button) {
       body: JSON.stringify({
         quizId: id,
         quizName: quiz.name,
-        launchUrl,
-        launchMode: modeSelect.value,
       }),
     });
-    storeLaunchUrl(id, launchUrl);
     state.scormExports.set(id, payload);
     renderScormRows();
-    showToast("SCORM package ready for Moodle upload.");
+    showToast("Embedded SCORM bridge package ready for Moodle upload.");
   } catch (error) {
     showToast(error.message, true);
   } finally {

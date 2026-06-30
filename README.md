@@ -22,6 +22,7 @@ This repo is meant to bootstrap an empty Cloudflare project from the Git checkou
 npm install
 wrangler login
 export FLEXIQUIZ_API_KEY="your-flexiquiz-key"
+export FLEXIQUIZ_JWT_SECRET="your-flexiquiz-sso-secret"
 npm run deploy
 ```
 
@@ -31,13 +32,14 @@ npm run deploy
 - creates or reuses the R2 bucket named `fqreports-exports`
 - writes the D1 database id into `wrangler.jsonc`
 - applies the D1 migrations remotely
-- uploads `FLEXIQUIZ_API_KEY` as a Cloudflare secret when the env var is present
+- uploads `FLEXIQUIZ_API_KEY` and `FLEXIQUIZ_JWT_SECRET` as Cloudflare secrets when the env vars are present
 - deploys the Worker and static assets
 
 If the secret is not available during bootstrap, set it later:
 
 ```sh
 wrangler secret put FLEXIQUIZ_API_KEY
+wrangler secret put FLEXIQUIZ_JWT_SECRET
 wrangler deploy
 ```
 
@@ -55,6 +57,7 @@ Create `.dev.vars`:
 
 ```sh
 FLEXIQUIZ_API_KEY=your-flexiquiz-key
+FLEXIQUIZ_JWT_SECRET=your-flexiquiz-sso-secret
 ```
 
 Start the Worker locally:
@@ -78,9 +81,9 @@ python3 -m unittest
 
 ## SCORM Export Notes
 
-The SCORM export intentionally does not copy questions or answers into Moodle. It packages a small SCO wrapper that launches the live FlexiQuiz URL, so FlexiQuiz remains the source of truth for scoring, responses, and review/audit history.
+The SCORM export intentionally does not copy questions or answers into Moodle. It packages a small SCO wrapper that creates a FlexiQuiz SSO session for the Moodle learner, embeds the live FlexiQuiz quiz, polls FlexiQuiz for the submitted response, and writes the resulting score/pass-fail values back to Moodle through the SCORM 1.2 API.
 
-Because the hosted FlexiQuiz page is cross-origin, the SCORM package cannot reliably read the learner's FlexiQuiz score from inside Moodle. The package records SCORM launch/completion interaction only. Use the reports module or FlexiQuiz itself for authoritative pass/fail and score reporting.
+Moodle SCORM exposes `student_id` and `student_name` to the package, but not a guaranteed email field. If Moodle's `student_id` is an email address, the bridge uses it as the FlexiQuiz username/email. Otherwise, it creates a stable FlexiQuiz username from the Moodle student id and carries the learner name into FlexiQuiz.
 
 ## Legacy Python CLI
 

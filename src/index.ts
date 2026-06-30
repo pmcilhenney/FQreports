@@ -1,9 +1,9 @@
-import { flexiFetch, FlexiQuizApi, HttpError, latestSubmitted, quizId, responseId } from "./flexiquiz";
+import { flexiFetch, flexiPost, FlexiQuizApi, HttpError, latestSubmitted, passFor, quizId, responseId, scoreFor } from "./flexiquiz";
 import { convertQuestions } from "./moodle";
 import { filterRows, normalizeResponse, questionRows, questionsCsv, ReportFilters, responsesCsv, summarize } from "./reports";
-import { buildScormPackage, ScormLaunchMode } from "./scorm";
+import { buildScormPackage } from "./scorm";
 
-type Env = Cloudflare.Env;
+type Env = Cloudflare.Env & { FLEXIQUIZ_JWT_SECRET?: string };
 type Ctx = ExecutionContext;
 
 function json(payload: unknown, status = 200): Response {
@@ -12,6 +12,9 @@ function json(payload: unknown, status = 200): Response {
     headers: {
       "Content-Type": "application/json; charset=utf-8",
       "Cache-Control": "no-store",
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Headers": "Content-Type",
+      "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
     },
   });
 }
@@ -37,6 +40,90 @@ function stamp(): string {
 
 function slug(value: string): string {
   return (value || "export").toLowerCase().replace(/&/g, " and ").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 80) || "export";
+}
+
+function randomToken(): string {
+  const bytes = new Uint8Array(24);
+  crypto.getRandomValues(bytes);
+  return btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
+function base64Url(bytes: ArrayBuffer | Uint8Array): string {
+  const data = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  return btoa(String.fromCharCode(...data)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
+async function signJwt(secret: string, payload: Record<string, unknown>): Promise<string> {
+  const header = { alg: "HS256", typ: "JWT" };
+  const encodedHeader = base64Url(new TextEncoder().encode(JSON.stringify(header)));
+  const encodedPayload = base64Url(new TextEncoder().encode(JSON.stringify(payload)));
+  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const signature = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(`${encodedHeader}.${encodedPayload}`));
+  return `${encodedHeader}.${encodedPayload}.${base64Url(signature)}`;
+}
+
+function siteBaseUrl(request: Request): string {
+  const url = new URL(request.url);
+  return `${url.protocol}//${url.host}`;
+}
+
+function emailLike(value: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+}
+
+function stableUserName(studentId: string): string {
+  if (emailLike(studentId)) return studentId.toLowerCase();
+  return `moodle-${studentId.toLowerCase().replace(/[^a-z0-9_.-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 80) || "student"}`;
+}
+
+function userId(value: FlexiQuizApi): string {
+  return String(value.user_id || value.id || "");
+}
+
+function userName(value: FlexiQuizApi): string {
+  return String(value.user_name || value.email_address || value.email || "");
+}
+
+async function ensureFlexiQuizUser(env: Env, body: { moodleStudentId: string; firstName?: string; lastName?: string }): Promise<FlexiQuizApi> {
+  const name = stableUserName(body.moodleStudentId || "unknown");
+  try {
+    const found = await flexiPost<FlexiQuizApi>(env, "/users/find", { user_name: name });
+    if (userId(found)) return found;
+  } catch (error) {
+    if (!(error instanceof HttpError) || error.status !== 404) throw error;
+  }
+  const createParams: Record<string, string | number | boolean> = {
+    user_name: name,
+    password: randomToken(),
+    first_name: body.firstName || "Moodle",
+    last_name: body.lastName || "Learner",
+    email_invite: false,
+  };
+  if (emailLike(name)) createParams.email_address = name;
+  const created = await flexiPost<FlexiQuizApi>(env, "/users", {
+    ...createParams,
+  });
+  if (!userId(created)) throw new HttpError(502, "FlexiQuiz did not return a user_id for the created user.");
+  return created;
+}
+
+async function assignQuiz(env: Env, user: FlexiQuizApi, quizIdValue: string) {
+  try {
+    await flexiPost<unknown>(env, `/users/${encodeURIComponent(userId(user))}/quizzes`, { quiz_id: quizIdValue });
+  } catch (error) {
+    if (error instanceof HttpError && [400, 409].includes(error.status) && /already|assigned/i.test(error.message)) return;
+    throw error;
+  }
+}
+
+async function buildSsoLaunchUrl(env: Env, user: FlexiQuizApi, quizIdValue: string): Promise<string> {
+  const secret = env.FLEXIQUIZ_JWT_SECRET;
+  if (!secret) throw new HttpError(500, "FLEXIQUIZ_JWT_SECRET is not configured.");
+  const jwt = await signJwt(secret, {
+    user_id: userId(user),
+    exp: Math.floor(Date.now() / 1000) + 15 * 60,
+  });
+  return `https://www.flexiquiz.com/account/auth?cla=t&jwt=${encodeURIComponent(jwt)}&quiz_id=${encodeURIComponent(quizIdValue)}`;
 }
 
 async function cacheQuizzes(env: Env, quizzes: FlexiQuizApi[], ctx: Ctx) {
@@ -110,18 +197,16 @@ async function moodleExport(request: Request, env: Env, ctx: Ctx) {
 }
 
 async function scormExport(request: Request, env: Env) {
-  const body = await readJson<{ quizId?: string; quizName?: string; launchUrl?: string; launchMode?: ScormLaunchMode }>(request);
+  const body = await readJson<{ quizId?: string; quizName?: string }>(request);
   if (!body.quizId) throw new HttpError(400, "quizId is required.");
-  if (!body.launchUrl) throw new HttpError(400, "FlexiQuiz launch URL is required.");
-  const launchUrl = new URL(body.launchUrl);
-  if (!["https:", "http:"].includes(launchUrl.protocol)) throw new HttpError(400, "Launch URL must be an http or https URL.");
+  if (!env.FLEXIQUIZ_JWT_SECRET) throw new HttpError(500, "FLEXIQUIZ_JWT_SECRET is not configured.");
   const quizName = body.quizName || body.quizId;
-  const launchMode = body.launchMode === "iframe" ? "iframe" : "new_window";
+  const packageToken = randomToken();
   const zip = buildScormPackage({
     quizId: body.quizId,
     quizName,
-    launchUrl: launchUrl.toString(),
-    launchMode,
+    bridgeUrl: siteBaseUrl(request),
+    packageToken,
   });
   const filename = `${slug(quizName)}-${stamp()}.scorm.zip`;
   const key = `scorm/${filename}`;
@@ -130,16 +215,69 @@ async function scormExport(request: Request, env: Env) {
   const now = new Date().toISOString();
   await env.DB.batch([
     env.DB.prepare("INSERT INTO flexiquiz_launch_urls (quiz_id, launch_url, launch_mode, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(quiz_id) DO UPDATE SET launch_url = excluded.launch_url, launch_mode = excluded.launch_mode, updated_at = excluded.updated_at")
-      .bind(body.quizId, launchUrl.toString(), launchMode, now),
-    env.DB.prepare("INSERT INTO scorm_exports (export_id, quiz_id, quiz_name, launch_url, launch_mode, package_object_key, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
-      .bind(exportId, body.quizId, quizName, launchUrl.toString(), launchMode, key, now),
+      .bind(body.quizId, "sso", "iframe", now),
+    env.DB.prepare("INSERT INTO scorm_exports (export_id, quiz_id, quiz_name, launch_url, launch_mode, package_object_key, created_at, package_token) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+      .bind(exportId, body.quizId, quizName, "sso", "iframe", key, now, packageToken),
   ]);
   return json({
     exportId,
     filename,
     downloadUrl: `/downloads/${encodeURIComponent(key)}`,
-    launchUrl: launchUrl.toString(),
-    launchMode,
+    launchMode: "iframe",
+  });
+}
+
+async function scormSession(request: Request, env: Env) {
+  const body = await readJson<{
+    packageToken?: string;
+    quizId?: string;
+    moodleStudentId?: string;
+    moodleStudentName?: string;
+    firstName?: string;
+    lastName?: string;
+  }>(request);
+  if (!body.packageToken || !body.quizId || !body.moodleStudentId) throw new HttpError(400, "packageToken, quizId, and moodleStudentId are required.");
+  const exportRow = await env.DB.prepare("SELECT quiz_id FROM scorm_exports WHERE package_token = ?").bind(body.packageToken).first<{ quiz_id: string }>();
+  if (!exportRow || exportRow.quiz_id !== body.quizId) throw new HttpError(403, "SCORM package token is not valid for this quiz.");
+  const user = await ensureFlexiQuizUser(env, {
+    moodleStudentId: body.moodleStudentId,
+    firstName: body.firstName,
+    lastName: body.lastName,
+  });
+  await assignQuiz(env, user, body.quizId);
+  const sessionId = crypto.randomUUID();
+  const launchUrl = await buildSsoLaunchUrl(env, user, body.quizId);
+  await env.DB.prepare(
+    "INSERT INTO scorm_sessions (session_id, package_token, quiz_id, moodle_student_id, moodle_student_name, flexiquiz_user_id, flexiquiz_user_name, created_at, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+  ).bind(sessionId, body.packageToken, body.quizId, body.moodleStudentId, body.moodleStudentName || "", userId(user), userName(user), new Date().toISOString(), "launched").run();
+  return json({ sessionId, launchUrl });
+}
+
+async function scormResult(request: Request, env: Env) {
+  const body = await readJson<{ packageToken?: string; sessionId?: string }>(request);
+  if (!body.packageToken || !body.sessionId) throw new HttpError(400, "packageToken and sessionId are required.");
+  const session = await env.DB.prepare(
+    "SELECT session_id, package_token, quiz_id, flexiquiz_user_id FROM scorm_sessions WHERE session_id = ? AND package_token = ?"
+  ).bind(body.sessionId, body.packageToken).first<{ session_id: string; package_token: string; quiz_id: string; flexiquiz_user_id: string }>();
+  if (!session) throw new HttpError(404, "SCORM session not found.");
+  const responses = await flexiFetch<FlexiQuizApi[]>(env, `/quizzes/${encodeURIComponent(session.quiz_id)}/responses`);
+  const matched = responses
+    .filter((response) => String(response.user_id || "") === session.flexiquiz_user_id && String(response.status || "").toLowerCase() === "submitted")
+    .sort((a, b) => String(b.date_submitted || "").localeCompare(String(a.date_submitted || "")))[0];
+  const now = new Date().toISOString();
+  if (!matched) {
+    await env.DB.prepare("UPDATE scorm_sessions SET last_checked_at = ?, status = ? WHERE session_id = ?").bind(now, "incomplete", body.sessionId).run();
+    return json({ completed: false });
+  }
+  const score = scoreFor(matched);
+  const pass = passFor(matched);
+  await env.DB.prepare("UPDATE scorm_sessions SET last_checked_at = ?, completed_at = ?, response_id = ?, score = ?, pass = ?, status = ? WHERE session_id = ?")
+    .bind(now, now, responseId(matched), score, pass === null ? null : pass ? 1 : 0, pass === false ? "failed" : "passed", body.sessionId).run();
+  return json({
+    completed: true,
+    responseId: responseId(matched),
+    score: score ?? 0,
+    pass: pass !== false,
   });
 }
 
@@ -191,13 +329,15 @@ async function download(env: Env, key: string) {
 
 async function api(request: Request, env: Env, ctx: Ctx, url: URL): Promise<Response> {
   if (request.method === "GET" && url.pathname === "/api/config") {
-    return json({ flexiquizConfigured: Boolean(env.FLEXIQUIZ_API_KEY) });
+    return json({ flexiquizConfigured: Boolean(env.FLEXIQUIZ_API_KEY), flexiquizSsoConfigured: Boolean(env.FLEXIQUIZ_JWT_SECRET) });
   }
   if (request.method === "GET" && url.pathname === "/api/quizzes") return listQuizzes(env, ctx);
   const responsesMatch = url.pathname.match(/^\/api\/quizzes\/([^/]+)\/responses$/);
   if (request.method === "GET" && responsesMatch) return listResponses(env, ctx, decodeURIComponent(responsesMatch[1]));
   if (request.method === "POST" && url.pathname === "/api/moodle/export") return moodleExport(request, env, ctx);
   if (request.method === "POST" && url.pathname === "/api/scorm/export") return scormExport(request, env);
+  if (request.method === "POST" && url.pathname === "/api/scorm/session") return scormSession(request, env);
+  if (request.method === "POST" && url.pathname === "/api/scorm/result") return scormResult(request, env);
   if (request.method === "POST" && url.pathname === "/api/reports/run") return runReport(request, env, ctx);
   throw new HttpError(404, "API route not found.");
 }
@@ -206,6 +346,7 @@ export default {
   async fetch(request: Request, env: Env, ctx: Ctx): Promise<Response> {
     const url = new URL(request.url);
     try {
+      if (request.method === "OPTIONS") return json({ ok: true });
       if (url.pathname.startsWith("/api/")) return await api(request, env, ctx, url);
       if (url.pathname.startsWith("/downloads/")) return await download(env, decodeURIComponent(url.pathname.slice("/downloads/".length)));
       if (url.pathname === "/health") return json({ ok: true });

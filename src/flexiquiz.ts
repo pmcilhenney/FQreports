@@ -8,6 +8,9 @@ export type FlexiQuizApi = {
   first_name?: string;
   last_name?: string;
   email?: string;
+  email_address?: string;
+  user_id?: string | null;
+  user_name?: string | null;
   percentage_score?: number | string;
   grade?: string;
   pass?: boolean | string | number;
@@ -45,6 +48,29 @@ export async function flexiFetch<T>(env: EnvLike, path: string): Promise<T> {
   return (text ? JSON.parse(text) : null) as T;
 }
 
+export async function flexiPost<T>(env: EnvLike, path: string, params: Record<string, string | number | boolean>): Promise<T> {
+  const apiKey = env.FLEXIQUIZ_API_KEY;
+  if (!apiKey) {
+    throw new HttpError(401, "FlexiQuiz API key is not configured. Set FLEXIQUIZ_API_KEY with wrangler secret put.");
+  }
+  const base = (env.FLEXIQUIZ_API_BASE || DEFAULT_API_BASE).replace(/\/+$/, "");
+  const body = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) body.set(key, String(value));
+  const response = await fetch(`${base}${path}`, {
+    method: "POST",
+    headers: {
+      "X-API-KEY": apiKey,
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+    body,
+  });
+  const text = await response.text();
+  if (!response.ok) {
+    throw new HttpError(response.status, `FlexiQuiz returned HTTP ${response.status}: ${text}`);
+  }
+  return (text ? JSON.parse(text) : null) as T;
+}
+
 export function quizId(quiz: FlexiQuizApi): string {
   return String(quiz.quiz_id || quiz.id || "");
 }
@@ -67,6 +93,7 @@ export function learnerName(response: FlexiQuizApi): string {
 }
 
 export function emailFor(response: FlexiQuizApi): string {
+  if (response.email_address) return String(response.email_address);
   if (response.email) return String(response.email);
   const fields = response.registration_fields;
   if (Array.isArray(fields)) {

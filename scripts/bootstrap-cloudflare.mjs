@@ -31,12 +31,12 @@ function writeConfig(text) {
   fs.writeFileSync(configPath, text);
 }
 
-function readLocalSecret() {
+function readLocalSecret(name) {
   for (const file of [".dev.vars", ".env.local"]) {
     const filePath = path.join(root, file);
     if (!fs.existsSync(filePath)) continue;
     const text = fs.readFileSync(filePath, "utf8");
-    const match = text.match(/^FLEXIQUIZ_API_KEY=(.*)$/m);
+    const match = text.match(new RegExp(`^${name}=(.*)$`, "m"));
     if (!match) continue;
     return match[1].trim().replace(/^["']|["']$/g, "");
   }
@@ -84,25 +84,26 @@ function applyMigrations() {
   run(["d1", "migrations", "apply", databaseName, "--remote"], { stdio: "inherit" });
 }
 
-function putSecretFromEnv() {
-  const secret = process.env.FLEXIQUIZ_API_KEY || readLocalSecret();
+function putSecretFromEnv(name) {
+  const secret = process.env[name] || readLocalSecret(name);
   if (!secret) {
-    console.log("FLEXIQUIZ_API_KEY not present in this shell; skipping secret upload.");
-    console.log("Set it later with: wrangler secret put FLEXIQUIZ_API_KEY");
+    console.log(`${name} not present in this shell or local env file; skipping secret upload.`);
+    console.log(`Set it later with: wrangler secret put ${name}`);
     return;
   }
-  const result = spawnSync(wrangler, ["secret", "put", "FLEXIQUIZ_API_KEY"], {
+  const result = spawnSync(wrangler, ["secret", "put", name], {
     cwd: root,
     input: secret,
     encoding: "utf8",
   });
   if (result.status !== 0) {
-    throw new Error(result.stderr || result.stdout || "Could not upload FLEXIQUIZ_API_KEY.");
+    throw new Error(result.stderr || result.stdout || `Could not upload ${name}.`);
   }
-  console.log("Uploaded FLEXIQUIZ_API_KEY secret.");
+  console.log(`Uploaded ${name} secret.`);
 }
 
 ensureD1();
 ensureR2();
 applyMigrations();
-putSecretFromEnv();
+putSecretFromEnv("FLEXIQUIZ_API_KEY");
+putSecretFromEnv("FLEXIQUIZ_JWT_SECRET");

@@ -1,12 +1,10 @@
 import { strToU8, zipSync } from "fflate";
 
-export type ScormLaunchMode = "new_window" | "iframe";
-
 export type ScormPackageOptions = {
   quizId: string;
   quizName: string;
-  launchUrl: string;
-  launchMode: ScormLaunchMode;
+  bridgeUrl: string;
+  packageToken: string;
 };
 
 function xml(value: string): string {
@@ -56,7 +54,6 @@ function manifest(opts: ScormPackageOptions): string {
 }
 
 function indexHtml(opts: ScormPackageOptions): string {
-  const useIframe = opts.launchMode === "iframe";
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -64,37 +61,26 @@ function indexHtml(opts: ScormPackageOptions): string {
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>${html(opts.quizName)}</title>
   <style>
-    :root { color-scheme: light; --accent: #0b6b5c; --text: #172026; --muted: #61707a; --line: #d7dee2; }
+    :root { color-scheme: light; --text: #172026; --muted: #61707a; --line: #d7dee2; }
     * { box-sizing: border-box; }
-    body { margin: 0; color: var(--text); font-family: Arial, Helvetica, sans-serif; background: #f4f6f7; }
-    main { min-height: 100vh; display: grid; grid-template-rows: auto 1fr auto; }
-    header, footer { background: white; border-bottom: 1px solid var(--line); padding: 14px 18px; }
-    footer { border-top: 1px solid var(--line); border-bottom: 0; color: var(--muted); font-size: 13px; }
-    h1 { margin: 0; font-size: 20px; }
-    p { margin: 6px 0 0; color: var(--muted); }
-    .launch { display: flex; align-items: center; gap: 10px; padding: 14px 18px; background: white; border-bottom: 1px solid var(--line); }
-    button, a.button { min-height: 38px; border: 1px solid var(--accent); border-radius: 6px; background: var(--accent); color: white; padding: 0 14px; text-decoration: none; display: inline-flex; align-items: center; cursor: pointer; font-size: 14px; }
-    iframe { width: 100%; height: 100%; min-height: 680px; border: 0; background: white; }
-    .empty { display: grid; place-items: center; padding: 32px; text-align: center; }
-    .box { max-width: 720px; background: white; border: 1px solid var(--line); border-radius: 8px; padding: 22px; }
+    html, body, main { width: 100%; height: 100%; min-height: 100%; }
+    body { margin: 0; color: var(--text); font-family: Arial, Helvetica, sans-serif; background: white; }
+    main { display: grid; grid-template-rows: auto 1fr; }
+    .status { min-height: 34px; padding: 8px 12px; background: white; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 13px; }
+    iframe { width: 100%; height: 100%; min-height: 760px; border: 0; background: white; }
   </style>
 </head>
 <body>
   <main>
-    <header>
-      <h1>${html(opts.quizName)}</h1>
-      <p>This SCORM package launches the live FlexiQuiz quiz. FlexiQuiz remains the source of truth for responses, scoring, and review records.</p>
-    </header>
-    <section class="launch">
-      <a class="button" id="launchLink" href="${html(opts.launchUrl)}" target="_blank" rel="noopener">Open FlexiQuiz</a>
-      <button id="completeBtn" type="button">Mark Launched</button>
-      <span id="statusText">Ready</span>
-    </section>
-    ${useIframe ? `<iframe src="${html(opts.launchUrl)}" title="${html(opts.quizName)}"></iframe>` : `<section class="empty"><div class="box"><h2>Open the hosted quiz</h2><p>Use the button above to open FlexiQuiz in a new tab or window. Return here and mark it launched so Moodle records the SCORM activity interaction.</p></div></section>`}
-    <footer>Quiz ID: ${html(opts.quizId)}</footer>
+    <div class="status" id="statusText">Preparing ${html(opts.quizName)}...</div>
+    <iframe id="quizFrame" title="${html(opts.quizName)}"></iframe>
   </main>
   <script>
     var API = null;
+    var bridgeUrl = "${html(opts.bridgeUrl)}";
+    var packageToken = "${html(opts.packageToken)}";
+    var sessionId = "";
+    var pollTimer = 0;
     function findApi(win) {
       var attempts = 0;
       while (win && attempts < 500) {
@@ -117,17 +103,88 @@ function indexHtml(opts: ScormPackageOptions): string {
       } catch (error) {}
       return "";
     }
-    function setStatus(status) {
-      lms("set", "cmi.core.lesson_status", status);
-      lms("set", "cmi.core.score.raw", "");
-      lms("commit");
-      document.getElementById("statusText").textContent = status === "completed" ? "Launched in Moodle" : "Opened";
+    function lmsGet(name) {
+      try {
+        if (!API) API = findApi(window);
+        if (!API) return "";
+        return API.LMSGetValue(name) || "";
+      } catch (error) {}
+      return "";
     }
-    lms("initialize");
-    lms("set", "cmi.core.lesson_location", "${html(opts.launchUrl)}");
-    setStatus("browsed");
-    document.getElementById("launchLink").addEventListener("click", function () { setStatus("completed"); });
-    document.getElementById("completeBtn").addEventListener("click", function () { setStatus("completed"); });
+    function setLesson(status, score) {
+      lms("set", "cmi.core.lesson_status", status);
+      if (typeof score === "number") {
+        lms("set", "cmi.core.score.min", "0");
+        lms("set", "cmi.core.score.max", "100");
+        lms("set", "cmi.core.score.raw", String(score));
+      }
+      lms("commit");
+    }
+    function setStatus(text) {
+      document.getElementById("statusText").textContent = text;
+    }
+    function parseName(value) {
+      var raw = String(value || "").trim();
+      if (!raw) return { firstName: "", lastName: "" };
+      if (raw.indexOf(",") >= 0) {
+        var parts = raw.split(",");
+        return { firstName: parts.slice(1).join(",").trim(), lastName: parts[0].trim() };
+      }
+      var tokens = raw.split(/\\s+/);
+      return { firstName: tokens.slice(0, -1).join(" "), lastName: tokens.slice(-1).join(" ") };
+    }
+    async function post(path, body) {
+      var response = await fetch(bridgeUrl + path, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body)
+      });
+      var payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "Bridge request failed.");
+      return payload;
+    }
+    async function pollResult() {
+      if (!sessionId) return;
+      try {
+        var result = await post("/api/scorm/result", { sessionId: sessionId, packageToken: packageToken });
+        if (result.completed) {
+          window.clearInterval(pollTimer);
+          setLesson(result.pass ? "passed" : "failed", result.score);
+          setStatus("Score recorded in Moodle: " + result.score + "%");
+        } else {
+          setLesson("incomplete");
+          setStatus("Quiz in progress. Results will sync to Moodle after submission.");
+        }
+      } catch (error) {
+        setStatus(error.message);
+      }
+    }
+    async function boot() {
+      lms("initialize");
+      setLesson("incomplete");
+      var name = lmsGet("cmi.core.student_name");
+      var parsed = parseName(name);
+      var studentId = lmsGet("cmi.core.student_id") || "unknown";
+      try {
+        var session = await post("/api/scorm/session", {
+          packageToken: packageToken,
+          quizId: "${html(opts.quizId)}",
+          moodleStudentId: studentId,
+          moodleStudentName: name,
+          firstName: parsed.firstName,
+          lastName: parsed.lastName
+        });
+        sessionId = session.sessionId;
+        document.getElementById("quizFrame").src = session.launchUrl;
+        lms("set", "cmi.core.lesson_location", sessionId);
+        setStatus("Quiz loaded. Results will sync to Moodle after submission.");
+        pollTimer = window.setInterval(pollResult, 10000);
+        window.setTimeout(pollResult, 4000);
+      } catch (error) {
+        setStatus(error.message);
+      }
+    }
+    boot();
     window.addEventListener("beforeunload", function () { lms("commit"); lms("finish"); });
   </script>
 </body>

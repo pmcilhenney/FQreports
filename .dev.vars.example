@@ -1,1 +1,2 @@
 FLEXIQUIZ_API_KEY=replace-with-flexiquiz-api-key
+FLEXIQUIZ_JWT_SECRET=replace-with-flexiquiz-sso-secret
