@@ -32,6 +32,18 @@ export class HttpError extends Error {
   }
 }
 
+function parseFlexiJson<T>(text: string, path: string): T {
+  const trimmed = text.trim();
+  if (!trimmed) return null as T;
+  if (/^2\d\d:\s*OK$/i.test(trimmed)) return {} as T;
+  try {
+    return JSON.parse(trimmed) as T;
+  } catch (error) {
+    const detail = trimmed.replace(/\s+/g, " ").slice(0, 240);
+    throw new HttpError(502, `FlexiQuiz returned a non-JSON response for ${path}: ${detail}`);
+  }
+}
+
 export async function flexiFetch<T>(env: EnvLike, path: string): Promise<T> {
   const apiKey = env.FLEXIQUIZ_API_KEY;
   if (!apiKey) {
@@ -45,7 +57,7 @@ export async function flexiFetch<T>(env: EnvLike, path: string): Promise<T> {
   if (!response.ok) {
     throw new HttpError(response.status, `FlexiQuiz returned HTTP ${response.status}: ${text}`);
   }
-  return (text ? JSON.parse(text) : null) as T;
+  return parseFlexiJson<T>(text, path);
 }
 
 export async function flexiPost<T>(env: EnvLike, path: string, params: Record<string, string | number | boolean>): Promise<T> {
@@ -68,7 +80,7 @@ export async function flexiPost<T>(env: EnvLike, path: string, params: Record<st
   if (!response.ok) {
     throw new HttpError(response.status, `FlexiQuiz returned HTTP ${response.status}: ${text}`);
   }
-  return (text ? JSON.parse(text) : null) as T;
+  return parseFlexiJson<T>(text, path);
 }
 
 export function quizId(quiz: FlexiQuizApi): string {

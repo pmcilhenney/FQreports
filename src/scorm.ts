@@ -139,7 +139,13 @@ function indexHtml(opts: ScormPackageOptions): string {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body)
       });
-      var payload = await response.json();
+      var text = await response.text();
+      var payload = {};
+      try {
+        payload = text ? JSON.parse(text) : {};
+      } catch (error) {
+        throw new Error("Bridge returned a non-JSON response: " + text.replace(/\\s+/g, " ").slice(0, 180));
+      }
       if (!response.ok) throw new Error(payload.error || "Bridge request failed.");
       return payload;
     }
