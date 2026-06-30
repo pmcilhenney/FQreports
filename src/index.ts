@@ -57,7 +57,7 @@ async function signJwt(secret: string, payload: Record<string, unknown>): Promis
   const header = { alg: "HS256", typ: "JWT" };
   const encodedHeader = base64Url(new TextEncoder().encode(JSON.stringify(header)));
   const encodedPayload = base64Url(new TextEncoder().encode(JSON.stringify(payload)));
-  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(secret.trim()), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
   const signature = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(`${encodedHeader}.${encodedPayload}`));
   return `${encodedHeader}.${encodedPayload}.${base64Url(signature)}`;
 }
@@ -88,7 +88,7 @@ async function ensureFlexiQuizUser(env: Env, body: { moodleStudentId: string; fi
   const name = stableUserName(body.moodleStudentId || "unknown");
   try {
     const found = await flexiPost<FlexiQuizApi>(env, "/users/find", { user_name: name });
-    if (userId(found)) return found;
+    if (userId(found)) return { ...found, user_name: name };
   } catch (error) {
     if (!(error instanceof HttpError) || error.status !== 404) throw error;
   }
@@ -104,7 +104,7 @@ async function ensureFlexiQuizUser(env: Env, body: { moodleStudentId: string; fi
     ...createParams,
   });
   if (!userId(created)) throw new HttpError(502, "FlexiQuiz did not return a user_id for the created user.");
-  return created;
+  return { ...created, user_name: name };
 }
 
 async function assignQuiz(env: Env, user: FlexiQuizApi, quizIdValue: string) {
@@ -119,9 +119,11 @@ async function assignQuiz(env: Env, user: FlexiQuizApi, quizIdValue: string) {
 async function buildSsoLaunchUrl(env: Env, user: FlexiQuizApi, quizIdValue: string): Promise<string> {
   const secret = env.FLEXIQUIZ_JWT_SECRET;
   if (!secret) throw new HttpError(500, "FLEXIQUIZ_JWT_SECRET is not configured.");
+  const loginName = userName(user);
+  if (!loginName) throw new HttpError(502, "FlexiQuiz user_name was not available for SSO.");
   const jwt = await signJwt(secret, {
-    user_id: userId(user),
-    exp: Math.floor(Date.now() / 1000) + 15 * 60,
+    user_name: loginName,
+    exp: String(Math.floor(Date.now() / 1000) + 15 * 60),
   });
   return `https://www.flexiquiz.com/account/auth?cla=t&jwt=${encodeURIComponent(jwt)}&quiz_id=${encodeURIComponent(quizIdValue)}`;
 }
